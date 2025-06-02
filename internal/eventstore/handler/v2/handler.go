@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"math"
 	"math/rand"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/shopspring/decimal"
 	"github.com/zitadel/logging"
 
 	"github.com/zitadel/zitadel/internal/api/authz"
@@ -60,6 +60,7 @@ type Handler struct {
 	requeueEvery     time.Duration
 	txDuration       time.Duration
 	now              nowFunc
+	queryGlobal      bool
 
 	triggeredInstancesSync sync.Map
 
@@ -67,6 +68,8 @@ type Handler struct {
 	cacheInvalidations   []func(ctx context.Context, aggregates []*eventstore.Aggregate)
 
 	queryInstances func() ([]string, error)
+
+	metrics *ProjectionMetrics
 }
 
 var _ migration.Migration = (*Handler)(nil)
@@ -141,6 +144,11 @@ type Projection interface {
 	Reducers() []AggregateReducer
 }
 
+type GlobalProjection interface {
+	Projection
+	FilterGlobalEvents()
+}
+
 func NewHandler(
 	ctx context.Context,
 	config *Config,
@@ -158,6 +166,8 @@ func NewHandler(
 		}
 		aggregates[reducer.Aggregate] = eventTypes
 	}
+
+	metrics := NewProjectionMetrics()
 
 	handler := &Handler{
 		projection:             projection,
@@ -178,6 +188,11 @@ func NewHandler(
 			}
 			return nil, nil
 		},
+		metrics: metrics,
+	}
+
+	if _, ok := projection.(GlobalProjection); ok {
+		handler.queryGlobal = true
 	}
 
 	return handler
@@ -263,12 +278,16 @@ func (h *Handler) triggerInstances(ctx context.Context, instances []string, trig
 
 		// simple implementation of do while
 		_, err := h.Trigger(instanceCtx, triggerOpts...)
-		h.log().WithField("instance", instance).OnError(err).Debug("trigger failed")
+		// skip retry if everything is fine
+		if err == nil {
+			continue
+		}
+		h.log().WithField("instance", instance).WithError(err).Debug("trigger failed")
 		time.Sleep(h.retryFailedAfter)
 		// retry if trigger failed
 		for ; err != nil; _, err = h.Trigger(instanceCtx, triggerOpts...) {
 			time.Sleep(h.retryFailedAfter)
-			h.log().WithField("instance", instance).OnError(err).Debug("trigger failed")
+			h.log().WithField("instance", instance).WithError(err).Debug("trigger failed")
 		}
 	}
 }
@@ -376,7 +395,8 @@ func (h *Handler) existingInstances(ctx context.Context) ([]string, error) {
 
 type triggerConfig struct {
 	awaitRunning bool
-	maxPosition  float64
+	maxPosition  decimal.Decimal
+	minPosition  decimal.Decimal
 }
 
 type TriggerOpt func(conf *triggerConfig)
@@ -387,9 +407,15 @@ func WithAwaitRunning() TriggerOpt {
 	}
 }
 
-func WithMaxPosition(position float64) TriggerOpt {
+func WithMaxPosition(position decimal.Decimal) TriggerOpt {
 	return func(conf *triggerConfig) {
 		conf.maxPosition = position
+	}
+}
+
+func WithMinPosition(position decimal.Decimal) TriggerOpt {
+	return func(conf *triggerConfig) {
+		conf.minPosition = position
 	}
 }
 
@@ -479,6 +505,8 @@ func (h *Handler) processEvents(ctx context.Context, config *triggerConfig) (add
 		defer cancel()
 	}
 
+	start := time.Now()
+
 	tx, err := h.client.BeginTx(txCtx, nil)
 	if err != nil {
 		return false, err
@@ -498,9 +526,14 @@ func (h *Handler) processEvents(ctx context.Context, config *triggerConfig) (add
 		}
 		return additionalIteration, err
 	}
-	// stop execution if currentState.eventTimestamp >= config.maxCreatedAt
-	if config.maxPosition != 0 && currentState.position >= config.maxPosition {
+	// stop execution if currentState.position >= config.maxPosition
+	if !config.maxPosition.Equal(decimal.Decimal{}) && currentState.position.GreaterThanOrEqual(config.maxPosition) {
 		return false, nil
+	}
+
+	if config.minPosition.GreaterThan(decimal.NewFromInt(0)) {
+		currentState.position = config.minPosition
+		currentState.offset = 0
 	}
 
 	var statements []*Statement
@@ -514,7 +547,14 @@ func (h *Handler) processEvents(ctx context.Context, config *triggerConfig) (add
 		if err == nil {
 			err = commitErr
 		}
+
+		h.metrics.ProjectionEventsProcessed(ctx, h.ProjectionName(), int64(len(statements)), err == nil)
+
 		if err == nil && currentState.aggregateID != "" && len(statements) > 0 {
+			// Don't update projection timing or latency unless we successfully processed events
+			h.metrics.ProjectionUpdateTiming(ctx, h.ProjectionName(), float64(time.Since(start).Seconds()))
+			h.metrics.ProjectionStateLatency(ctx, h.ProjectionName(), time.Since(currentState.eventTimestamp).Seconds())
+
 			h.invalidateCaches(ctx, aggregatesFromStatements(statements))
 		}
 	}()
@@ -536,7 +576,11 @@ func (h *Handler) processEvents(ctx context.Context, config *triggerConfig) (add
 	currentState.aggregateType = statements[lastProcessedIndex].Aggregate.Type
 	currentState.sequence = statements[lastProcessedIndex].Sequence
 	currentState.eventTimestamp = statements[lastProcessedIndex].CreationDate
-	err = h.setState(tx, currentState)
+
+	setStateErr := h.setState(tx, currentState)
+	if setStateErr != nil {
+		err = setStateErr
+	}
 
 	return additionalIteration, err
 }
@@ -586,7 +630,7 @@ func (h *Handler) generateStatements(ctx context.Context, tx *sql.Tx, currentSta
 
 func skipPreviouslyReducedStatements(statements []*Statement, currentState *state) int {
 	for i, statement := range statements {
-		if statement.Position == currentState.position &&
+		if statement.Position.Equal(currentState.position) &&
 			statement.Aggregate.ID == currentState.aggregateID &&
 			statement.Aggregate.Type == currentState.aggregateType &&
 			statement.Sequence == currentState.sequence {
@@ -646,27 +690,29 @@ func (h *Handler) eventQuery(currentState *state) *eventstore.SearchQueryBuilder
 	builder := eventstore.NewSearchQueryBuilder(eventstore.ColumnsEvent).
 		AwaitOpenTransactions().
 		Limit(uint64(h.bulkLimit)).
-		AllowTimeTravel().
 		OrderAsc().
 		InstanceID(currentState.instanceID)
 
-	if currentState.position > 0 {
-		// decrease position by 10 because builder.PositionAfter filters for position > and we need position >=
-		builder = builder.PositionAfter(math.Float64frombits(math.Float64bits(currentState.position) - 10))
+	if currentState.position.GreaterThan(decimal.Decimal{}) {
+		builder = builder.PositionAtLeast(currentState.position)
 		if currentState.offset > 0 {
 			builder = builder.Offset(currentState.offset)
 		}
 	}
 
-	for aggregateType, eventTypes := range h.eventTypes {
-		builder = builder.
-			AddQuery().
-			AggregateTypes(aggregateType).
-			EventTypes(eventTypes...).
-			Builder()
+	if h.queryGlobal {
+		return builder
 	}
 
-	return builder
+	aggregateTypes := make([]eventstore.AggregateType, 0, len(h.eventTypes))
+	eventTypes := make([]eventstore.EventType, 0, len(h.eventTypes))
+
+	for aggregate, events := range h.eventTypes {
+		aggregateTypes = append(aggregateTypes, aggregate)
+		eventTypes = append(eventTypes, events...)
+	}
+
+	return builder.AddQuery().AggregateTypes(aggregateTypes...).EventTypes(eventTypes...).Builder()
 }
 
 // ProjectionName returns the name of the underlying projection.

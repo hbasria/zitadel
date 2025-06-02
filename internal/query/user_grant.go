@@ -10,7 +10,6 @@ import (
 	"github.com/zitadel/logging"
 
 	"github.com/zitadel/zitadel/internal/api/authz"
-	"github.com/zitadel/zitadel/internal/api/call"
 	"github.com/zitadel/zitadel/internal/database"
 	"github.com/zitadel/zitadel/internal/domain"
 	"github.com/zitadel/zitadel/internal/eventstore/handler/v2"
@@ -246,7 +245,7 @@ func (q *Queries) UserGrant(ctx context.Context, shouldTriggerBulk bool, queries
 		traceSpan.EndWithError(err)
 	}
 
-	query, scan := prepareUserGrantQuery(ctx, q.client)
+	query, scan := prepareUserGrantQuery()
 	for _, q := range queries {
 		query = q.toQuery(query)
 	}
@@ -274,14 +273,14 @@ func (q *Queries) UserGrants(ctx context.Context, queries *UserGrantsQueries, sh
 		traceSpan.EndWithError(err)
 	}
 
-	query, scan := prepareUserGrantsQuery(ctx, q.client)
+	query, scan := prepareUserGrantsQuery()
 	eq := sq.Eq{UserGrantInstanceID.identifier(): authz.GetInstance(ctx).InstanceID()}
 	stmt, args, err := queries.toQuery(query).Where(eq).ToSql()
 	if err != nil {
 		return nil, zerrors.ThrowInternal(err, "QUERY-wXnQR", "Errors.Query.SQLStatement")
 	}
 
-	latestSequence, err := q.latestState(ctx, userGrantTable)
+	latestState, err := q.latestState(ctx, userGrantTable)
 	if err != nil {
 		return nil, err
 	}
@@ -294,11 +293,11 @@ func (q *Queries) UserGrants(ctx context.Context, queries *UserGrantsQueries, sh
 		return nil, err
 	}
 
-	grants.State = latestSequence
+	grants.State = latestState
 	return grants, nil
 }
 
-func prepareUserGrantQuery(ctx context.Context, db prepareDatabase) (sq.SelectBuilder, func(*sql.Row) (*UserGrant, error)) {
+func prepareUserGrantQuery() (sq.SelectBuilder, func(*sql.Row) (*UserGrant, error)) {
 	return sq.Select(
 			UserGrantID.identifier(),
 			UserGrantCreationDate.identifier(),
@@ -336,7 +335,7 @@ func prepareUserGrantQuery(ctx context.Context, db prepareDatabase) (sq.SelectBu
 			LeftJoin(join(OrgColumnID, UserGrantResourceOwner)).
 			LeftJoin(join(ProjectColumnID, UserGrantProjectID)).
 			LeftJoin(join(GrantedOrgColumnId, UserResourceOwnerCol)).
-			LeftJoin(join(LoginNameUserIDCol, UserGrantUserID) + db.Timetravel(call.Took(ctx))).
+			LeftJoin(join(LoginNameUserIDCol, UserGrantUserID)).
 			Where(
 				sq.Eq{LoginNameIsPrimaryCol.identifier(): true},
 			).PlaceholderFormat(sq.Dollar),
@@ -421,7 +420,7 @@ func prepareUserGrantQuery(ctx context.Context, db prepareDatabase) (sq.SelectBu
 		}
 }
 
-func prepareUserGrantsQuery(ctx context.Context, db prepareDatabase) (sq.SelectBuilder, func(*sql.Rows) (*UserGrants, error)) {
+func prepareUserGrantsQuery() (sq.SelectBuilder, func(*sql.Rows) (*UserGrants, error)) {
 	return sq.Select(
 			UserGrantID.identifier(),
 			UserGrantCreationDate.identifier(),
@@ -461,7 +460,7 @@ func prepareUserGrantsQuery(ctx context.Context, db prepareDatabase) (sq.SelectB
 			LeftJoin(join(OrgColumnID, UserGrantResourceOwner)).
 			LeftJoin(join(ProjectColumnID, UserGrantProjectID)).
 			LeftJoin(join(GrantedOrgColumnId, UserResourceOwnerCol)).
-			LeftJoin(join(LoginNameUserIDCol, UserGrantUserID) + db.Timetravel(call.Took(ctx))).
+			LeftJoin(join(LoginNameUserIDCol, UserGrantUserID)).
 			Where(
 				sq.Eq{LoginNameIsPrimaryCol.identifier(): true},
 			).PlaceholderFormat(sq.Dollar),

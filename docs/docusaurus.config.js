@@ -201,28 +201,6 @@ module.exports = {
       runmeLinkLabel: 'Checkout via Runme'
     },
   },
-  webpack: {
-    jsLoader: (isServer) => ({
-      loader: require.resolve('swc-loader'),
-      options: {
-        jsc: {
-          parser: {
-            syntax: 'typescript',
-            tsx: true,
-          },
-          transform: {
-            react: {
-              runtime: 'automatic',
-            },
-          },
-          target: 'es2017',
-        },
-        module: {
-          type: isServer ? 'commonjs' : 'es6',
-        },
-      },
-    }),
-  },
   presets: [
     [
       "classic",
@@ -308,6 +286,14 @@ module.exports = {
               categoryLinkSource: "auto",
             },
           },
+          saml_v2: {
+            specPath: ".artifacts/openapi/zitadel/saml/v2/saml_service.swagger.json",
+            outputDir: "docs/apis/resources/saml_service_v2",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: "auto",
+            },
+          },
           settings_v2: {
             specPath: ".artifacts/openapi/zitadel/settings/v2/settings_service.swagger.json",
             outputDir: "docs/apis/resources/settings_service_v2",
@@ -316,33 +302,17 @@ module.exports = {
               categoryLinkSource: "auto",
             },
           },
-          user_schema_v3: {
-            specPath: ".artifacts/openapi/zitadel/resources/userschema/v3alpha/user_schema_service.swagger.json",
-            outputDir: "docs/apis/resources/user_schema_service_v3",
-            sidebarOptions: {
-              groupPathsBy: "tag",
-              categoryLinkSource: "auto",
-            },
-          },
-          user_v3: {
-            specPath: ".artifacts/openapi/zitadel/resources/user/v3alpha/user_service.swagger.json",
-            outputDir: "docs/apis/resources/user_service_v3",
-            sidebarOptions: {
-              groupPathsBy: "tag",
-              categoryLinkSource: "auto",
-            },
-          },
-          action_v3: {
-            specPath: ".artifacts/openapi/zitadel/resources/action/v3alpha/action_service.swagger.json",
-            outputDir: "docs/apis/resources/action_service_v3",
+          action_v2: {
+            specPath: ".artifacts/openapi/zitadel/action/v2beta/action_service.swagger.json",
+            outputDir: "docs/apis/resources/action_service_v2",
             sidebarOptions: {
                 groupPathsBy: "tag",
                 categoryLinkSource: "auto",
             },
           },
-          webkey_v3: {
-            specPath: ".artifacts/openapi/zitadel/resources/webkey/v3alpha/webkey_service.swagger.json",
-            outputDir: "docs/apis/resources/webkey_service_v3",
+          webkey_v2: {
+            specPath: ".artifacts/openapi/zitadel/webkey/v2beta/webkey_service.swagger.json",
+            outputDir: "docs/apis/resources/webkey_service_v2",
             sidebarOptions: {
                 groupPathsBy: "tag",
                 categoryLinkSource: "auto",
@@ -372,6 +342,22 @@ module.exports = {
               categoryLinkSource: "auto",
             },
           },
+          project_v2beta: {
+            specPath: ".artifacts/openapi/zitadel/project/v2beta/project_service.swagger.json",
+            outputDir: "docs/apis/resources/project_service_v2",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: "auto",
+            },
+          },
+          instance_v2: {
+            specPath: ".artifacts/openapi/zitadel/instance/v2beta/instance_service.swagger.json",
+            outputDir: "docs/apis/resources/instance_service_v2",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: "auto",
+            },
+          },
         },
       },
     ],
@@ -389,4 +375,17 @@ module.exports = {
     },
   ],
   themes: [ "docusaurus-theme-github-codeblock", "docusaurus-theme-openapi-docs"],
+  future: {
+    v4: false, // Disabled because of some problems related to https://github.com/facebook/docusaurus/issues/11040
+    experimental_faster: {
+      swcJsLoader: false, // Disabled because of memory usage > 8GB which is a problem on vercel default runners
+      swcJsMinimizer: true,
+      swcHtmlMinimizer : true,
+      lightningCssMinimizer: true,
+      mdxCrossCompilerCache: true,
+      ssgWorkerThreads: false, // Disabled because of some problems related to https://github.com/facebook/docusaurus/issues/11040
+      rspackBundler: true,
+      rspackPersistentCache: true,
+    },
+  },
 };

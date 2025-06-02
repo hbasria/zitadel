@@ -52,6 +52,7 @@ ZITADEL is available in the following languages
 - Swedish (sv)
 - Hungarian (hu)
 - 한국어 (ko)
+- Romanian (ro)
 - Turkish (tr)
 
 A language is displayed based on your agent's language header.

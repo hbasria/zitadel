@@ -265,6 +265,7 @@ RegistrationUser:
   Indonesian: Bahasa Indonesia
   Hungarian: Magyar
   Korean: 한국어
+  Romanian: Română
   Turkish: Türkçe
   GenderLabel: Genre
   Female: Femme
@@ -309,6 +310,7 @@ ExternalRegistrationUserOverview:
   Indonesian: Bahasa Indonesia
   Hungarian: Magyar
   Korean: 한국어
+  Romanian: Română
   Turkish: Türkçe
   TosAndPrivacyLabel: Termes et conditions
   TosConfirm: J'accepte les
@@ -387,6 +389,7 @@ ExternalNotFound:
   Indonesian: Bahasa Indonesia
   Hungarian: Magyar
   Korean: 한국어
+  Romanian: Română
   Turkish: Türkçe
 
 DeviceAuth:

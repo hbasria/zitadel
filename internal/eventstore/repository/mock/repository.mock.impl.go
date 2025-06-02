@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
@@ -144,7 +145,17 @@ func (m *MockRepository) ExpectPushFailed(err error, expectedCommands []eventsto
 				assert.Equal(m.MockPusher.ctrl.T, expectedCommand.Creator(), commands[i].Creator())
 				assert.Equal(m.MockPusher.ctrl.T, expectedCommand.Type(), commands[i].Type())
 				assert.Equal(m.MockPusher.ctrl.T, expectedCommand.Revision(), commands[i].Revision())
-				assert.Equal(m.MockPusher.ctrl.T, expectedCommand.Payload(), commands[i].Payload())
+				var expectedPayload []byte
+				expectedPayload, ok := expectedCommand.Payload().([]byte)
+				if !ok {
+					expectedPayload, _ = json.Marshal(expectedCommand.Payload())
+				}
+				if string(expectedPayload) == "" {
+					expectedPayload = []byte("null")
+				}
+				gotPayload, _ := json.Marshal(commands[i].Payload())
+
+				assert.Equal(m.MockPusher.ctrl.T, expectedPayload, gotPayload)
 				assert.ElementsMatch(m.MockPusher.ctrl.T, expectedCommand.UniqueConstraints(), commands[i].UniqueConstraints())
 			}
 
@@ -187,8 +198,8 @@ func (e *mockEvent) Sequence() uint64 {
 	return e.sequence
 }
 
-func (e *mockEvent) Position() float64 {
-	return 0
+func (e *mockEvent) Position() decimal.Decimal {
+	return decimal.Decimal{}
 }
 
 func (e *mockEvent) CreatedAt() time.Time {
